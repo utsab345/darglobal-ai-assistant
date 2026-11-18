@@ -83,8 +83,54 @@ def build_user_prompt(question: str, context: str) -> str:
 
 
 _THINKING_START_RE = re.compile(
-    r"(?is)^\s*(here['\u2019]?s\s+(a\s+|the\s+)?thinking process\s*:|thinking process\s*:|let['\u2019]?s\s+think\s*:?)\b"
+    r"(?is)^\s*(here['\u2019]?s\s+(a\s+|the\s+)?thinking process\s*:|thinking process\s*:|let['\u2019]?s\s+think\s*:?|let me think\b)"
 )
+
+_REASONING_MARKERS = (
+    "here's a thinking process",
+    "here\u2019s a thinking process",
+    "thinking process:",
+    "let's think",
+    "let\u2019s think",
+    "analyze user request",
+    "analyzing user request",
+    "analyze the user",
+    "examine the retrieved context",
+    "examine the context",
+    "scan retrieved context",
+    "scan the context",
+    "extract dar",
+    "extract wasalt",
+    "synthesize answer",
+    "synthesise answer",
+    "draft carefully",
+    "check constraints",
+    "structure of answer",
+    "final answer should",
+    "i need to answer",
+    "i must answer",
+    "i should answer",
+    "let me re-read",
+    "let me draft",
+    "let me compile",
+)
+
+
+def looks_like_reasoning(text: str) -> bool:
+    if not text:
+        return False
+    t = text.strip()
+    low = t.lower()
+    if _THINKING_START_RE.match(t):
+        return True
+    score = sum(1 for m in _REASONING_MARKERS if m in low)
+    if score >= 2:
+        return True
+    if re.match(r"(?is)^\s*\d+\.\s+\*\*(analy[sz]e|examine|extract|review|scan)\b", t):
+        return True
+    if low.count("i need to") + low.count("i must") + low.count("let me ") >= 3 and "[s1]" not in low:
+        return True
+    return False
 
 
 def strip_thinking(text: str) -> str:
@@ -101,10 +147,10 @@ def strip_thinking(text: str) -> str:
         m = re.search(marker, t)
         if m:
             candidate = t[m.end():].strip()
-            if len(candidate) >= 20:
+            if len(candidate) >= 20 and not looks_like_reasoning(candidate[:400]):
                 return candidate
 
-    if _THINKING_START_RE.match(t) or re.match(r"(?is)^\s*\d+\.\s+\*\*(analy[sz]e|examine|extract|review)\b", t):
+    if looks_like_reasoning(t):
         parts = re.split(r'\n\s*\n', t)
         kept: list[str] = []
         dropping = True
@@ -112,20 +158,39 @@ def strip_thinking(text: str) -> str:
             ps = part.strip()
             if not ps:
                 continue
-            looks_analysis = bool(
+            low = ps.lower()
+            has_citation = bool(re.search(r'\[s\d+\]|https?://', low))
+            meta_start = bool(
                 re.match(
-                    r"(?is)^(\d+\.|\-|\*|here['\u2019]?s|let['\u2019]?s|i need to|i should|analy[sz]e|examine|extract|review|synthesi[sz]e|check constraints|draft|structure|thinking process)",
+                    r"(?is)^(\d+\.\s+)?(here['\u2019]?s|let['\u2019]?s|i need to|i must|i should|analy[sz]e|examine|extract|review|scan|synthesi[sz]e|check constraints|draft|structure|thinking process)",
                     ps,
                 )
-            ) and len(ps) < 1400
-            if dropping and looks_analysis:
-                continue
-            dropping = False
+            )
+            if dropping:
+                if has_citation and not meta_start and len(ps) >= 40:
+                    dropping = False
+                    kept.append(ps)
+                    continue
+                if meta_start or len(ps) < 1400:
+                    continue
+                dropping = False
             kept.append(ps)
-        if kept:
-            cleaned = '\n\n'.join(kept).strip()
-            if cleaned:
-                return cleaned
+
+        cleaned = '\n\n'.join(kept).strip()
+        if cleaned and not looks_like_reasoning(cleaned[:500]):
+            return cleaned
+
+        for part in reversed(parts):
+            ps = part.strip()
+            if not ps:
+                continue
+            low = ps.lower()
+            if re.search(r'\[s\d+\]', low) and not re.match(r"(?is)^(here['\u2019]?s|let['\u2019]?s|i need to|i must|i should|\d+\.\s+\*\*)", ps):
+                candidate = ps
+                if len(candidate) >= 30 and not looks_like_reasoning(candidate[:300]):
+                    return candidate
+
+        return ""
 
     return t
 
@@ -217,6 +282,17 @@ async def generate_chat_response(request: ChatRequest) -> ChatResponse:
     try:
         result = await client.chat(messages)
         cleaned = strip_thinking(result.get('content', ''))
+        if not cleaned or looks_like_reasoning(cleaned):
+            fallback_notice = 'The model response was not usable as a direct answer. Showing retrieved dataset excerpts instead.'
+            return ChatResponse(
+                answer=degraded_answer(chunks, fallback_notice),
+                sources=sources,
+                source_urls=[source.url for source in sources],
+                model=result.get('model'),
+                retrieved_count=len(chunks),
+                degraded=True,
+                notice='Showing retrieved dataset excerpts instead of a synthesized answer.',
+            )
         answer = ensure_citations(cleaned, sources)
         return ChatResponse(
             answer=answer,
