@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: darglobal-ai-assistant
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 7860
+      - key: EMBEDDING_PROVIDER
+        value: hash
+      - key: AUTO_BUILD_KB
+        value: false
+      - key: OPENROUTER_MODEL
+        value: auto
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: SCRAPE_ADMIN_TOKEN
+        generateValue: true
