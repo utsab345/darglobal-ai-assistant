@@ -20,22 +20,8 @@ A retrieval augmented chatbot for exploring publicly collected property informat
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    A[Public DarGlobal and Wasalt pages] --> B[Scrapers]
-    B --> C[Raw JSON documents]
-    C --> D[Cleaning and chunking]
-    D --> E[Hash embeddings]
-    E --> F[FAISS / vector store]
-    U[User question] --> G[React UI]
-    G --> H[FastAPI /api/chat]
-    H --> I[Retriever + source filter]
-    I --> F
-    I --> J[Prompt with retrieved context]
-    J --> K[OpenRouter model]
-    K --> L[Grounded answer + citations]
-    L --> G
-```
+<img width="1536" height="1024" alt="archi" src="https://github.com/user-attachments/assets/e7d9cbec-c48c-424b-babb-a45a645fee25" />
+
 
 ## Dataset Snapshot
 
