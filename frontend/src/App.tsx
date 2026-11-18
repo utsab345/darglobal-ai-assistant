@@ -15,6 +15,8 @@ type ChatMessage = {
   content: string
   sources?: SourceItem[]
   model?: string | null
+  retrievedCount?: number
+  notice?: string | null
 }
 
 type ChatResponse = {
@@ -22,28 +24,40 @@ type ChatResponse = {
   sources: SourceItem[]
   model?: string | null
   retrieved_count: number
+  degraded?: boolean
+  notice?: string | null
 }
 
 type Stats = {
-  scrape?: { results?: Array<Record<string, unknown>> }
   knowledge_base?: Record<string, unknown>
+  scrape?: { results?: Array<Record<string, unknown>> }
 }
 
 const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 const API_BASE = configuredApiBase || (import.meta.env.DEV ? 'http://localhost:8000' : '')
+
 const SUGGESTIONS = [
   'What properties does DarGlobal offer?',
-  'Which projects are available in Saudi Arabia?',
-  'Tell me about DarGlobal developments in Dubai.',
-  'What amenities are offered in a particular project?',
-  'What information is available about properties on Wasalt?',
-  'Compare relevant projects from the collected data.'
+  'Which DarGlobal projects are in the collected data?',
+  'What information is available about Wasalt properties?',
+  'Show project details and locations found in the dataset.',
+  'Compare DarGlobal and Wasalt information from collected pages.',
 ]
 
 function sourceLabel(s: SourceItem['source']) {
   if (s === 'dar_global') return 'DarGlobal'
   if (s === 'wasalt') return 'Wasalt'
-  return 'Unknown'
+  return 'Source'
+}
+
+function formatKbSummary(stats: Stats | null) {
+  const kb = stats?.knowledge_base as any
+  if (!kb) return 'Loading dataset information...'
+  const docs = kb.unique_documents ?? kb.documents ?? 0
+  const chunks = kb.chunks ?? 0
+  const dg = kb.sources?.dar_global ?? 0
+  const wa = kb.sources?.wasalt ?? 0
+  return `${docs} documents, ${chunks} chunks (DarGlobal ${dg}, Wasalt ${wa})`
 }
 
 export default function App() {
@@ -53,10 +67,17 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [sourceFilter, setSourceFilter] = useState<'all' | 'dar_global' | 'wasalt'>('all')
   const [stats, setStats] = useState<Stats | null>(null)
+  const [health, setHealth] = useState<{ status?: string; knowledge_base_ready?: boolean } | null>(null)
   const endRef = useRef<HTMLDivElement | null>(null)
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
-  useEffect(() => { void fetchStats() }, [])
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, loading])
+
+  useEffect(() => {
+    void fetchStats()
+    void fetchHealth()
+  }, [])
 
   async function fetchStats() {
     try {
@@ -65,33 +86,63 @@ export default function App() {
     } catch {}
   }
 
-  const kbSummary = useMemo(() => {
-    const kb = stats?.knowledge_base as any
-    if (!kb) return null
-    return `${kb.unique_documents ?? 0} docs, ${kb.chunks ?? 0} chunks (DarGlobal ${kb.sources?.dar_global ?? 0}, Wasalt ${kb.sources?.wasalt ?? 0})`
-  }, [stats])
+  async function fetchHealth() {
+    try {
+      const r = await fetch(`${API_BASE}/health`)
+      if (r.ok) setHealth(await r.json())
+    } catch {}
+  }
+
+  const kbSummary = useMemo(() => formatKbSummary(stats), [stats])
 
   async function sendMessage(text: string) {
     const q = text.trim()
     if (!q || loading) return
     setError(null)
+
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: q }
-    const history = messages.map(m => ({ role: m.role, content: m.content }))
-    setMessages(prev => [...prev, userMsg])
+    const history = messages.map((m) => ({ role: m.role, content: m.content }))
+    setMessages((prev) => [...prev, userMsg])
     setQuestion('')
     setLoading(true)
+
     try {
       const resp = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q, conversation_history: history, source_filter: sourceFilter })
+        body: JSON.stringify({
+          question: q,
+          conversation_history: history,
+          source_filter: sourceFilter,
+        }),
       })
-      if (!resp.ok) throw new Error(await resp.text() || `Request failed (${resp.status})`)
+
+      if (!resp.ok) {
+        const msg = await resp.text()
+        throw new Error(msg || `Request failed (${resp.status})`)
+      }
+
       const data = (await resp.json()) as ChatResponse
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: data.answer, sources: data.sources || [], model: data.model }])
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: data.answer || 'No answer returned.',
+        sources: data.sources || [],
+        model: data.model ?? null,
+        retrievedCount: data.retrieved_count ?? 0,
+        notice: data.notice ?? null,
+      }
+      setMessages((prev) => [...prev, assistantMsg])
     } catch (e: any) {
-      setError(e?.message || 'Failed to get response')
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: 'I could not complete that request right now. Please try again in a moment.' }])
+      setError(e?.message || 'Failed to get a response. Please try again.')
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: 'The request could not be completed. Please try again.',
+        },
+      ])
     } finally {
       setLoading(false)
     }
@@ -102,113 +153,178 @@ export default function App() {
     void sendMessage(question)
   }
 
+  const filters: Array<{ value: 'all' | 'dar_global' | 'wasalt'; label: string }> = [
+    { value: 'all', label: 'All sources' },
+    { value: 'dar_global', label: 'DarGlobal' },
+    { value: 'wasalt', label: 'Wasalt' },
+  ]
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_rgba(176,141,87,0.18),_transparent_45%),linear-gradient(180deg,#0f0d0b_0%,#15120f_40%,#0f0d0b_100%)] text-stone-100">
-      <div className="max-w-7xl mx-auto px-4 py-6 md:py-10">
-        <header className="mb-6 md:mb-8 rounded-2xl border border-stone-800/80 bg-stone-950/40 backdrop-blur p-5 md:p-7 shadow-glow">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-            <div>
-              <p className="text-xs tracking-[0.25em] uppercase text-brand-500 mb-2">DarGlobal x Wasalt</p>
-              <h1 className="text-2xl md:text-4xl font-semibold leading-tight">Applied AI Property Intelligence Assistant</h1>
-              <p className="mt-2 text-stone-300 max-w-3xl">Premium real-estate chatbot grounded in publicly collected website information from DarGlobal and Wasalt, with source citations and retrieval-based responses.</p>
+    <div className="min-h-screen bg-neutral-100 text-neutral-900">
+      <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 md:py-10">
+        <header className="mb-6 border border-neutral-200 bg-white p-5 shadow-soft md:mb-8 md:p-7">
+          <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+            <div className="max-w-3xl">
+              <p className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">Property Data Search</p>
+              <h1 className="text-2xl font-semibold tracking-tight text-black md:text-4xl">DarGlobal and Wasalt Property Q&A</h1>
+              <p className="mt-3 text-sm leading-6 text-neutral-600 md:text-base">
+                Search and ask questions over publicly collected pages from DarGlobal and Wasalt. Answers are based on retrieved dataset content and include source links when available.
+              </p>
             </div>
-            <div className="text-sm text-stone-300 bg-stone-900/70 border border-stone-800 rounded-xl p-3 min-w-[260px]">
-              <div className="font-medium text-stone-100 mb-1">Knowledge Base</div>
-              <div>{kbSummary || 'Loading stats...'}</div>
-              <div className="mt-1 text-xs text-stone-400">Source filter: {sourceFilter === 'all' ? 'All sources' : sourceLabel(sourceFilter as any)}</div>
+            <div className="w-full border border-neutral-200 bg-neutral-50 p-4 text-sm md:w-[320px]">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-medium text-neutral-900">Dataset status</span>
+                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${health?.knowledge_base_ready ? 'border-neutral-900 bg-black text-white' : 'border-neutral-300 bg-white text-neutral-700'}`}>
+                  {health?.knowledge_base_ready ? 'Ready' : health ? 'Starting' : 'Unknown'}
+                </span>
+              </div>
+              <div className="text-neutral-700">{kbSummary}</div>
+              <div className="mt-2 text-xs text-neutral-500">Filter: {filters.find(f => f.value === sourceFilter)?.label}</div>
             </div>
           </div>
         </header>
 
-        <div className="grid lg:grid-cols-[340px_1fr] gap-6">
+        <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
           <aside className="space-y-4">
-            <section className="rounded-2xl border border-stone-800 bg-stone-950/50 p-4 md:p-5">
-              <h2 className="font-semibold text-lg mb-3">Source Selection</h2>
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  ['all', 'All'],
-                  ['dar_global', 'DarGlobal'],
-                  ['wasalt', 'Wasalt'],
-                ] as const).map(([val, label]) => (
-                  <button key={val} onClick={() => setSourceFilter(val)} className={`rounded-lg px-3 py-2 text-sm border transition ${sourceFilter===val ? 'bg-brand-500/20 border-brand-500 text-brand-100' : 'bg-stone-900 border-stone-700 text-stone-300 hover:border-stone-500'}`}>{label}</button>
+            <section className="border border-neutral-200 bg-white p-4 shadow-soft md:p-5">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-700">Source filter</h2>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-1">
+                {filters.map((f) => (
+                  <button
+                    key={f.value}
+                    onClick={() => setSourceFilter(f.value)}
+                    className={`w-full border px-3 py-2 text-left text-sm transition ${sourceFilter === f.value ? 'border-black bg-black text-white' : 'border-neutral-300 bg-white text-neutral-800 hover:border-neutral-500'}`}
+                  >
+                    {f.label}
+                  </button>
                 ))}
               </div>
-              <p className="text-xs text-stone-400 mt-3">Use filters to focus retrieval on DarGlobal, Wasalt, or all collected sources.</p>
+              <p className="mt-3 text-xs leading-5 text-neutral-500">Limit retrieval to one source or search across all collected pages.</p>
             </section>
 
-            <section className="rounded-2xl border border-stone-800 bg-stone-950/50 p-4 md:p-5">
-              <h2 className="font-semibold text-lg mb-3">Suggested Questions</h2>
+            <section className="border border-neutral-200 bg-white p-4 shadow-soft md:p-5">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-700">Example questions</h2>
               <div className="space-y-2">
-                {SUGGESTIONS.map(s => (
-                  <button key={s} onClick={() => void sendMessage(s)} className="w-full text-left text-sm rounded-lg border border-stone-700 bg-stone-900/70 hover:border-brand-500/60 hover:bg-stone-900 px-3 py-2 transition">{s}</button>
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => void sendMessage(s)}
+                    className="w-full border border-neutral-200 bg-neutral-50 px-3 py-2 text-left text-sm text-neutral-800 transition hover:border-neutral-400 hover:bg-white"
+                  >
+                    {s}
+                  </button>
                 ))}
               </div>
             </section>
 
-            <section className="rounded-2xl border border-stone-800 bg-stone-950/50 p-4 md:p-5">
-              <h2 className="font-semibold text-lg mb-2">About Data Sources</h2>
-              <ul className="text-sm text-stone-300 space-y-2 list-disc pl-5">
-                <li>Public pages collected from <span className="text-brand-100">darglobal.co.uk</span> and <span className="text-brand-100">wasalt.sa</span>.</li>
-                <li>Responses are retrieval-augmented and cite source URLs from the collected dataset.</li>
-                <li>If data is unavailable, the assistant states that verified information was not found.</li>
-                <li>DarGlobal live access may be limited by anti-bot protections; coverage depends on accessible pages.</li>
+            <section className="border border-neutral-200 bg-white p-4 shadow-soft md:p-5">
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-700">About this dataset</h2>
+              <ul className="space-y-2 text-sm leading-6 text-neutral-600">
+                <li>Built from publicly accessible pages collected from darglobal.co.uk and wasalt.sa.</li>
+                <li>Responses cite retrieved source URLs from the collected snapshot.</li>
+                <li>Coverage can be incomplete when pages are unavailable or protected.</li>
+                <li>If a detail is not found in the dataset, the answer should state that clearly.</li>
               </ul>
             </section>
           </aside>
 
-          <main className="rounded-2xl border border-stone-800 bg-stone-950/50 overflow-hidden flex flex-col min-h-[70vh]">
-            <div className="px-4 md:px-6 py-4 border-b border-stone-800 flex items-center justify-between gap-3">
+          <main className="flex min-h-[70vh] flex-col border border-neutral-200 bg-white shadow-soft">
+            <div className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-4 md:px-6">
               <div>
-                <h2 className="font-semibold text-lg">Chat Assistant</h2>
-                <p className="text-xs text-stone-400">Ask about projects, locations, available collected information, and source-specific details.</p>
+                <h2 className="text-base font-semibold text-black md:text-lg">Conversation</h2>
+                <p className="text-xs text-neutral-500 md:text-sm">Questions are answered from retrieved pages in the selected source scope.</p>
               </div>
-              <button onClick={() => { setMessages([]); setError(null) }} className="text-sm px-3 py-2 rounded-lg border border-stone-700 hover:border-stone-500 bg-stone-900">Clear chat</button>
+              <button
+                onClick={() => { setMessages([]); setError(null) }}
+                className="border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-800 hover:border-black hover:text-black"
+              >
+                Clear
+              </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 md:p-6">
               {messages.length === 0 && (
-                <div className="rounded-xl border border-dashed border-stone-700 bg-stone-900/40 p-5 text-stone-300">
-                  Start by asking a question about DarGlobal or Wasalt. Answers will include retrieved source citations when available.
+                <div className="border border-dashed border-neutral-300 bg-neutral-50 p-5 text-sm leading-6 text-neutral-600">
+                  Ask a question to search the collected DarGlobal and Wasalt pages. Retrieved source links will appear with the answer.
                 </div>
               )}
-              {messages.map(m => (
+
+              {messages.map((m) => (
                 <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[95%] md:max-w-[85%] rounded-2xl px-4 py-3 border ${m.role === 'user' ? 'bg-brand-500/20 border-brand-500/40 text-brand-50' : 'bg-stone-900/80 border-stone-700 text-stone-100'}`}>
-                    <div className="whitespace-pre-wrap text-sm leading-relaxed">{m.content}</div>
+                  <div className={`max-w-[95%] border px-4 py-3 md:max-w-[85%] ${m.role === 'user' ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-900'}`}>
+                    <div className={`mb-1 text-[11px] font-medium uppercase tracking-wide ${m.role === 'user' ? 'text-neutral-300' : 'text-neutral-500'}`}>
+                      {m.role === 'user' ? 'Question' : 'Answer'}
+                    </div>
+                    <div className="whitespace-pre-wrap text-sm leading-6">{m.content}</div>
+
+                    {m.role === 'assistant' && m.notice && (
+                      <div className="mt-3 border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600">{m.notice}</div>
+                    )}
+
                     {m.role === 'assistant' && m.sources && m.sources.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-stone-700/70">
-                        <div className="text-xs uppercase tracking-wide text-stone-400 mb-2">Sources</div>
+                      <div className="mt-4 border-t border-neutral-200 pt-3">
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Sources</div>
                         <div className="space-y-2">
                           {m.sources.map((s, i) => (
-                            <a key={`${m.id}-${i}-${s.url}`} href={s.url} target="_blank" rel="noreferrer" className="block rounded-lg border border-stone-700 hover:border-brand-500/50 bg-stone-950/60 p-2.5">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="text-sm font-medium text-stone-100 line-clamp-1">{s.title || s.url}</div>
-                                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${s.source==='dar_global'?'border-amber-500/40 text-amber-200':s.source==='wasalt'?'border-emerald-500/40 text-emerald-200':'border-stone-600 text-stone-300'}`}>{sourceLabel(s.source)}</span>
+                            <a
+                              key={`${m.id}-${i}-${s.url}`}
+                              href={s.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block border border-neutral-200 bg-neutral-50 p-3 transition hover:border-neutral-500 hover:bg-white"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-sm font-medium text-neutral-900">{s.title || s.url}</div>
+                                <span className="border border-neutral-300 bg-white px-2 py-0.5 text-[11px] text-neutral-700">{sourceLabel(s.source)}</span>
                               </div>
-                              <div className="text-xs text-stone-400 mt-1 break-all">{s.url}</div>
-                              {s.snippet && <div className="text-xs text-stone-300 mt-1 line-clamp-2">{s.snippet}</div>}
+                              <div className="mt-1 break-all text-xs text-neutral-500">{s.url}</div>
+                              {s.snippet && <div className="mt-2 text-xs leading-5 text-neutral-600">{s.snippet}</div>}
                             </a>
                           ))}
                         </div>
                       </div>
                     )}
-                    {m.role === 'assistant' && m.model && <div className="mt-2 text-[11px] text-stone-500">Model: {m.model}</div>}
+
+                    {m.role === 'assistant' && (m.model || typeof m.retrievedCount === 'number') && (
+                      <div className="mt-3 text-[11px] text-neutral-500">
+                        {typeof m.retrievedCount === 'number' ? `Retrieved: ${m.retrievedCount}` : ''}
+                        {typeof m.retrievedCount === 'number' && m.model ? ' · ' : ''}
+                        {m.model ? `Model: ${m.model}` : ''}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
+
               {loading && (
-                <div className="flex justify-start"><div className="rounded-2xl px-4 py-3 border border-stone-700 bg-stone-900/80 text-stone-300 text-sm">Retrieving sources and generating response...</div></div>
+                <div className="flex justify-start">
+                  <div className="border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Searching collected pages and preparing an answer...</div>
+                </div>
               )}
-              {error && <div className="rounded-lg border border-red-900/50 bg-red-950/30 text-red-200 px-3 py-2 text-sm">{error}</div>}
+
+              {error && <div className="border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm text-neutral-800">{error}</div>}
               <div ref={endRef} />
             </div>
 
-            <form onSubmit={onSubmit} className="border-t border-stone-800 p-4 md:p-5 bg-stone-950/70">
-              <div className="flex flex-col md:flex-row gap-3">
-                <textarea value={question} onChange={e => setQuestion(e.target.value)} placeholder="Ask a question about DarGlobal or Wasalt..." rows={2} className="flex-1 resize-none rounded-xl border border-stone-700 bg-stone-900 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500/60" />
-                <button disabled={loading || !question.trim()} className="md:w-40 rounded-xl px-4 py-3 font-medium bg-brand-500 text-stone-950 hover:bg-brand-100 disabled:opacity-50 disabled:cursor-not-allowed transition">Send</button>
+            <form onSubmit={onSubmit} className="border-t border-neutral-200 bg-neutral-50 p-4 md:p-5">
+              <label htmlFor="question" className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-600">Your question</label>
+              <div className="flex flex-col gap-3 md:flex-row">
+                <textarea
+                  id="question"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  placeholder="Ask about projects, locations, or details found in the collected data..."
+                  rows={3}
+                  className="flex-1 resize-none border border-neutral-300 bg-white px-4 py-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-black focus:outline-none"
+                />
+                <button
+                  disabled={loading || !question.trim()}
+                  className="border border-black bg-black px-5 py-3 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-neutral-200 disabled:text-neutral-500 md:w-36"
+                >
+                  {loading ? 'Searching...' : 'Search'}
+                </button>
               </div>
-              <p className="mt-2 text-xs text-stone-500">Responses use only retrieved website information from the collected dataset and may be incomplete depending on scraping coverage.</p>
+              <p className="mt-2 text-xs leading-5 text-neutral-500">Answers use retrieved website content from the collected dataset and may be incomplete.</p>
             </form>
           </main>
         </div>

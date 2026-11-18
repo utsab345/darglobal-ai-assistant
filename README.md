@@ -1,110 +1,193 @@
----
-title: DarGlobal AI Assistant
-emoji: 🏢
-colorFrom: yellow
-colorTo: gray
-sdk: docker
-app_port: 7860
-pinned: false
----
+# DarGlobal and Wasalt Property Assistant
 
-# DarGlobal AI Assistant
+[![CI](https://github.com/utsab345/darglobal-ai-assistant/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/utsab345/darglobal-ai-assistant/actions/workflows/ci.yml)
+[![Deployment](https://img.shields.io/badge/deployment-live-brightgreen)](https://darglobal-ai-assistant.onrender.com)
+[![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
+[![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](backend/requirements.txt)
+[![React](https://img.shields.io/badge/react-18-20232A?logo=react&logoColor=61DAFB)](frontend/package.json)
 
-RAG chatbot using publicly available DarGlobal and Wasalt data, with FastAPI, OpenRouter, React, and Docker.
+A retrieval augmented chatbot for exploring publicly collected property information from DarGlobal and Wasalt. It combines a FastAPI backend, OpenRouter powered responses, a React frontend, and Docker deployment with source citations for grounded answers.
 
-## Status
-- App, tests, Docker configs, and knowledge base snapshot are included.
-- Public app URL: pending (needs Hugging Face login/token and deployment).
-- DarGlobal live scraping is limited by anti-bot protection for anonymous requests; scraper respects protections and does not bypass them.
+**Live demo:** https://darglobal-ai-assistant.onrender.com
+
+## Highlights
+
+- **Grounded Q&A:** Answers are generated from retrieved chunks in the collected dataset and include source links/citations.
+- **Dual sources:** Search across DarGlobal, Wasalt, or all collected pages with a source filter.
+- **OpenRouter integration:** Uses a free/available OpenRouter model (`OPENROUTER_MODEL=auto` by default) with graceful fallback to retrieved excerpts when unavailable.
+- **Production ready packaging:** Multi-stage Docker image, Render blueprint, prebuilt knowledge base, and health checks.
+- **Clean interface:** Responsive black and white UI focused on clarity, readable answers, and source inspection.
 
 ## Architecture
+
 ```mermaid
 flowchart LR
-  A[DarGlobal/Wasalt Pages] --> B[Scrapers]
-  B --> C[Raw JSON]
-  C --> D[Clean + Chunk]
-  D --> E[Embeddings]
-  E --> F[Vector Store]
-  F --> G[Retriever]
-  G --> H[FastAPI /api/chat]
-  H --> I[OpenRouter]
-  I --> J[React UI + Citations]
+    A[Public DarGlobal and Wasalt pages] --> B[Scrapers]
+    B --> C[Raw JSON documents]
+    C --> D[Cleaning and chunking]
+    D --> E[Hash embeddings]
+    E --> F[FAISS / vector store]
+    U[User question] --> G[React UI]
+    G --> H[FastAPI /api/chat]
+    H --> I[Retriever + source filter]
+    I --> F
+    I --> J[Prompt with retrieved context]
+    J --> K[OpenRouter model]
+    K --> L[Grounded answer + citations]
+    L --> G
 ```
 
 ## Dataset Snapshot
-- DarGlobal: 25 documents
-- Wasalt: 24 documents
-- Knowledge base: 49 documents, 279 chunks
-- Stats files: `backend/data/raw/last_scrape_summary.json`, `backend/data/processed/kb_stats.json`
 
-## Stack
-- Backend: Python, FastAPI, Requests, BeautifulSoup, NumPy
-- Retrieval: chunking, embeddings, vector search, source filtering, citations
-- LLM: OpenRouter (`OPENROUTER_MODEL=auto`, free model selection/fallbacks)
-- Frontend: React, TypeScript, Vite, Tailwind
-- Deploy: Docker (Hugging Face Spaces compatible), Docker Compose, Nginx
+| Metric | Value |
+|---|---|
+| Raw documents loaded | 49 |
+| Unique documents | 35 |
+| Chunks | 242 |
+| DarGlobal | 11 docs / 81 chunks |
+| Wasalt | 24 docs / 161 chunks |
+| Embeddings | `hash` (`hashed-tf-384`, dim 384) |
+| Vector backend | FAISS |
 
-## Local Run
-```bash
-cp .env.example .env
-python3 -m pip install --target ./.pydeps -r backend/requirements.txt
-PYTHONPATH=backend:./.pydeps uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
+Stats files: `backend/data/processed/kb_stats.json`, `backend/data/raw/last_scrape_summary.json`
+
+> Note: DarGlobal pages can be protected by anti-bot controls for anonymous requests. The scraper respects `robots.txt` and site protections and does not bypass them, so DarGlobal coverage is limited to publicly accessible content collected.
+
+## Tech Stack
+
+- **Backend:** Python 3.12, FastAPI, Uvicorn, Pydantic, Requests, BeautifulSoup, NumPy, FAISS
+- **RAG:** Chunking, hash embeddings, vector retrieval, source filtering, citation aware responses
+- **LLM:** OpenRouter API (free model selection/fallback)
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS
+- **Testing:** Pytest, pytest-asyncio, frontend production build checks
+- **Deployment:** Docker, Render Blueprint, Nginx/Compose configs
+
+## Repository Structure
+
+```text
+.
+├── .github/workflows/ci.yml      # CI: backend tests + frontend build
+├── backend/
+│   ├── app/                      # API, services, RAG, scraping
+│   ├── data/                     # Raw, processed, and vector store artifacts
+│   ├── scripts/                  # Scrape, update, and stats utilities
+│   └── tests/                    # Backend test suite
+├── frontend/                     # React + TypeScript UI
+├── docs/                         # Deployment notes
+├── Dockerfile                    # Multi-stage production image
+├── docker-compose.yml            # Local multi-container setup
+└── render.yaml                   # Render deployment blueprint
 ```
 
-Frontend:
+## Quick Start (Local)
+
+### 1. Backend
+
+```bash
+cp .env.example .env
+python3 -m pip install -r backend/requirements.txt
+PYTHONPATH=backend uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
+```
+
+### 2. Frontend
+
 ```bash
 cd frontend
+cp .env.example .env
 npm install
 npm run dev
 ```
 
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000`
+- Health: `http://localhost:8000/health`
+- API docs: `http://localhost:8000/docs`
+
 ## Docker
+
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
-- Frontend: `http://localhost:8080`
+
+- App (nginx): `http://localhost:8080`
 - Backend: `http://localhost:8000`
 - Health: `http://localhost:8000/health`
-- Docs: `http://localhost:8000/docs`
 
-## Scraping Commands
+Single container image (serves API + built frontend):
+
 ```bash
-PYTHONPATH=backend:./.pydeps python3 backend/scripts/scrape.py --sites dar_global wasalt --max-pages 25
-PYTHONPATH=backend:./.pydeps python3 backend/scripts/update_data.py --sites dar_global wasalt --max-pages 25
-PYTHONPATH=backend:./.pydeps python3 backend/scripts/scrape_stats.py
+docker build -t darglobal-ai-assistant .
+docker run --rm -p 7860:7860 --env-file .env darglobal-ai-assistant
 ```
 
 ## Environment Variables
+
 See `.env.example` and `frontend/.env.example`.
-- `OPENROUTER_API_KEY`: required for live LLM answers
-- `OPENROUTER_MODEL`: `auto` or explicit free model
-- `SCRAPE_ADMIN_TOKEN`: protects `POST /api/scrape`
-- `CORS_ORIGINS`, `VITE_API_BASE_URL`
-- `EMBEDDING_PROVIDER`, `CHUNK_SIZE`, `TOP_K_RESULTS`, `AUTO_BUILD_KB`
 
-## API
-- `GET /health`
-- `GET /api/stats`
-- `GET /api/sources`
-- `GET /api/projects`
-- `POST /api/chat`
-- `POST /api/scrape` (`X-Admin-Token`)
+| Variable | Purpose |
+|---|---|
+| `OPENROUTER_API_KEY` | Enables live LLM answers via OpenRouter (optional for retrieved excerpt fallback) |
+| `OPENROUTER_MODEL` | Model selection (`auto` recommended) |
+| `OPENROUTER_BASE_URL` | OpenRouter API base URL |
+| `EMBEDDING_PROVIDER` | Embedding provider (`hash` for lightweight deployment) |
+| `AUTO_BUILD_KB` | Build knowledge base on startup if missing |
+| `PORT` | Backend port (platform assigned in hosted environments) |
+| `CORS_ORIGINS` | Allowed frontend origins |
+| `SCRAPE_ADMIN_TOKEN` | Protects `POST /api/scrape` |
+| `VITE_API_BASE_URL` | Frontend API base URL for split deployments |
 
-## Testing
+## API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Service and knowledge base status |
+| `GET` | `/api/stats` | Dataset and scrape statistics |
+| `GET` | `/api/sources` | Available sources |
+| `GET` | `/api/projects` | Project/listing metadata from collected data |
+| `POST` | `/api/chat` | Ask a question with source filter and history |
+| `POST` | `/api/scrape` | Trigger scraping (requires `X-Admin-Token`) |
+
+## Data Collection and Knowledge Base
+
 ```bash
-PYTHONPATH=backend:./.pydeps PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest backend/tests -p pytest_asyncio.plugin -q
-cd frontend && npm run build
+PYTHONPATH=backend python3 backend/scripts/scrape.py --sites dar_global wasalt --max-pages 25
+PYTHONPATH=backend python3 backend/scripts/update_data.py --sites dar_global wasalt --max-pages 25
+PYTHONPATH=backend python3 backend/scripts/scrape_stats.py
 ```
 
-## Deployment (Hugging Face Spaces)
-- Create a Docker Space and push this repo.
-- Set Space secret `OPENROUTER_API_KEY` for live OpenRouter answers.
-- App runs on port `7860` via root `Dockerfile`.
-- Verify: `/health`, `/docs`, and chat with source citations.
+The deployed image includes a prebuilt hash embedding knowledge base for fast startup. To update deployed data, rebuild the knowledge base locally and commit/push the updated artifacts.
+
+## Testing and CI
+
+Backend tests:
+
+```bash
+PYTHONPATH=backend PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest backend/tests -p pytest_asyncio.plugin -q
+```
+
+Frontend build:
+
+```bash
+cd frontend && npm ci && npm run build
+```
+
+CI runs automatically on push/PR via [GitHub Actions](.github/workflows/ci.yml) (backend tests + frontend build).
+
+## Deployment
+
+- **Render:** Deploy from this repository using `render.yaml` (Docker runtime, health check `/health`, prebuilt KB). Set `OPENROUTER_API_KEY` as a secret in the Render environment.
+- **Docker hosts:** Use the root `Dockerfile` (exposes `7860` by default, compatible with Hugging Face Docker Spaces) or `docker-compose.yml` for multi-service setup.
+- **Verification:** Check `GET /health` returns `knowledge_base_ready: true`, then test `POST /api/chat` and UI responses with citations.
 
 ## Limitations
-- DarGlobal anti-bot controls limit fresh automated scraping.
-- Dataset is a bounded snapshot and may be incomplete.
-- Free OpenRouter model availability and rate limits can change.
-- Without `OPENROUTER_API_KEY`, responses fall back to retrieved excerpts with sources.
+
+- DarGlobal live scraping is limited by anti-bot protection; collected coverage may be incomplete.
+- Dataset is a bounded snapshot of publicly accessible pages at collection time.
+- Free OpenRouter models can change availability, rate limits, or response behavior.
+- Without `OPENROUTER_API_KEY`, answers fall back to retrieved excerpts with sources.
+- Hosted free tiers may cold start after inactivity; runtime filesystem updates are not persistent without rebuilding/redeploying.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
