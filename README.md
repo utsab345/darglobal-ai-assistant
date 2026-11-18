@@ -1,10 +1,20 @@
+---
+title: DarGlobal AI Assistant
+emoji: 🏢
+colorFrom: yellow
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # DarGlobal AI Assistant
 
 RAG chatbot using publicly available DarGlobal and Wasalt data, with FastAPI, OpenRouter, React, and Docker.
 
 ## Status
 - App, tests, Docker configs, and knowledge base snapshot are included.
-- Public app URL: pending (needs hosting credentials and `OPENROUTER_API_KEY` on the deployment platform).
+- Public app URL: pending (needs Hugging Face login/token and deployment).
 - DarGlobal live scraping is limited by anti-bot protection for anonymous requests; scraper respects protections and does not bypass them.
 
 ## Architecture
@@ -32,9 +42,9 @@ flowchart LR
 - Retrieval: chunking, embeddings, vector search, source filtering, citations
 - LLM: OpenRouter (`OPENROUTER_MODEL=auto`, free model selection/fallbacks)
 - Frontend: React, TypeScript, Vite, Tailwind
-- Deploy: Docker, Docker Compose, Nginx
+- Deploy: Docker (Hugging Face Spaces compatible), Docker Compose, Nginx
 
-## Setup
+## Local Run
 ```bash
 cp .env.example .env
 python3 -m pip install --target ./.pydeps -r backend/requirements.txt
@@ -87,11 +97,11 @@ PYTHONPATH=backend:./.pydeps PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest 
 cd frontend && npm run build
 ```
 
-## Deployment
-- Repo: https://github.com/utsab345/darglobal-ai-assistant
-- Public URL: pending
-- Backend health URL (public): pending
-- To deploy: push/deploy Docker app on a hosting platform, set env vars (especially `OPENROUTER_API_KEY`), then verify `/health` and chat responses with citations.
+## Deployment (Hugging Face Spaces)
+- Create a Docker Space and push this repo.
+- Set Space secret `OPENROUTER_API_KEY` for live OpenRouter answers.
+- App runs on port `7860` via root `Dockerfile`.
+- Verify: `/health`, `/docs`, and chat with source citations.
 
 ## Limitations
 - DarGlobal anti-bot controls limit fresh automated scraping.
