@@ -15,8 +15,9 @@ build/
 .DS_Store
 *.log
 backend/data/raw/
-backend/data/processed/
-backend/data/vectorstore/
+# Prebuilt KB artifacts committed for deployment (hash embeddings)
+# backend/data/processed/
+# backend/data/vectorstore/
 frontend/.vite/
 coverage/
 playwright-report/

@@ -1,0 +1,8 @@
+{
+  "provider": "hash",
+  "model": "hashed-tf-384",
+  "dim": 384,
+  "count": 242,
+  "built_at": "2026-11-18T14:40:06.796814+00:00",
+  "backend": "faiss"
+}
