@@ -30,3 +30,6 @@ test-results/
 .tmp/
 frontend/dist/
 backend/.pytest_cache/
+
+*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo

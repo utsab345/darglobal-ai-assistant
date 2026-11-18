@@ -108,7 +108,7 @@ export default function App() {
         <header className="mb-6 md:mb-8 rounded-2xl border border-stone-800/80 bg-stone-950/40 backdrop-blur p-5 md:p-7 shadow-glow">
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
             <div>
-              <p className="text-xs tracking-[0.25em] uppercase text-brand-500 mb-2">DarGlobal × Wasalt</p>
+              <p className="text-xs tracking-[0.25em] uppercase text-brand-500 mb-2">DarGlobal x Wasalt</p>
               <h1 className="text-2xl md:text-4xl font-semibold leading-tight">Applied AI Property Intelligence Assistant</h1>
               <p className="mt-2 text-stone-300 max-w-3xl">Premium real-estate chatbot grounded in publicly collected website information from DarGlobal and Wasalt, with source citations and retrieval-based responses.</p>
             </div>
