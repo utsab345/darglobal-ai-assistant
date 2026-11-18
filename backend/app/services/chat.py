@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from app.core.config import settings
 from app.models.schemas import ChatRequest, ChatResponse, SourceItem
@@ -74,10 +75,59 @@ def build_user_prompt(question: str, context: str) -> str:
         'If the context does not contain enough verified information, say so explicitly instead of guessing. '
         'Separate DarGlobal information from Wasalt information when both appear. '
         'Cite sources inline using the [S#] labels and include the source URL for each cited item. '
-        'Never invent prices, locations, specifications, availability, amenities, or contact details.\n\n'
+        'Never invent prices, locations, specifications, availability, amenities, or contact details. '
+        'Provide only the final answer for the user. Do not include a thinking process, analysis steps, or internal reasoning.\n\n'
         f'Retrieved context:\n{context}\n\n'
         f'User question: {question}'
     )
+
+
+_THINKING_START_RE = re.compile(
+    r"(?is)^\s*(here['\u2019]?s\s+(a\s+|the\s+)?thinking process\s*:|thinking process\s*:|let['\u2019]?s\s+think\s*:?)\b"
+)
+
+
+def strip_thinking(text: str) -> str:
+    if not text:
+        return text
+    t = text.strip()
+
+    for marker in (
+        r'(?im)^\s*#{1,6}\s*final answer\s*:?\s*$',
+        r'(?im)^\s*\*\*final answer\*\*\s*:?\s*',
+        r'(?im)^\s*final answer\s*:\s*',
+        r'(?im)^\s*answer\s*:\s*',
+    ):
+        m = re.search(marker, t)
+        if m:
+            candidate = t[m.end():].strip()
+            if len(candidate) >= 20:
+                return candidate
+
+    if _THINKING_START_RE.match(t) or re.match(r"(?is)^\s*\d+\.\s+\*\*(analy[sz]e|examine|extract|review)\b", t):
+        parts = re.split(r'\n\s*\n', t)
+        kept: list[str] = []
+        dropping = True
+        for part in parts:
+            ps = part.strip()
+            if not ps:
+                continue
+            looks_analysis = bool(
+                re.match(
+                    r"(?is)^(\d+\.|\-|\*|here['\u2019]?s|let['\u2019]?s|i need to|i should|analy[sz]e|examine|extract|review|synthesi[sz]e|check constraints|draft|structure|thinking process)",
+                    ps,
+                )
+            ) and len(ps) < 1400
+            if dropping and looks_analysis:
+                continue
+            dropping = False
+            kept.append(ps)
+        if kept:
+            cleaned = '\n\n'.join(kept).strip()
+            if cleaned:
+                return cleaned
+
+    return t
 
 
 def ensure_citations(answer: str, sources: list[SourceItem]) -> str:
@@ -88,7 +138,7 @@ def ensure_citations(answer: str, sources: list[SourceItem]) -> str:
     lines = ['', 'Sources:']
     for index, source in enumerate(sources, start=1):
         label = SOURCE_LABELS.get(source.source, 'Unknown')
-        lines.append(f'- [S{index}] {label} — {source.title} — {source.url}')
+        lines.append(f'- [S{index}] {label}  -  {source.title}  -  {source.url}')
     return answer.rstrip() + '\n'.join(lines)
 
 
@@ -101,7 +151,7 @@ def degraded_answer(chunks: list[dict], notice: str) -> str:
     for index, chunk in enumerate(chunks, start=1):
         label = SOURCE_LABELS.get(chunk.get('source'), 'Unknown')
         snippet = (chunk.get('content') or '').strip().replace('\n', ' ')
-        lines.append(f'[S{index}] {label} — {chunk.get("title", "")}')
+        lines.append(f'[S{index}] {label}  -  {chunk.get("title", "")}')
         lines.append(snippet[:700])
         lines.append(f'Source: {chunk.get("url", "")}')
         lines.append('')
@@ -166,7 +216,8 @@ async def generate_chat_response(request: ChatRequest) -> ChatResponse:
     client = OpenRouterClient()
     try:
         result = await client.chat(messages)
-        answer = ensure_citations(result['content'], sources)
+        cleaned = strip_thinking(result.get('content', ''))
+        answer = ensure_citations(cleaned, sources)
         return ChatResponse(
             answer=answer,
             sources=sources,

@@ -16,7 +16,8 @@ SYSTEM_PROMPT = (
     "Answer questions using only the retrieved website information provided in your context. "
     "Do not fabricate property details, prices, availability, amenities, or contact information. "
     "Cite the sources used in your answers. If information is unavailable, clearly state that you could not find verified information in the collected dataset. "
-    "Distinguish DarGlobal information from Wasalt information. Be professional, concise, and helpful."
+    "Distinguish DarGlobal information from Wasalt information. Be professional, concise, and helpful. "
+    "Provide only the final answer for the user. Do not include internal reasoning, chain-of-thought, analysis steps, or a thinking process."
 )
 
 PREFERRED_FAMILIES = (
